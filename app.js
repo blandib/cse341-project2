@@ -15,18 +15,26 @@ import protectedRouter from './routes/protected.js';
 dotenv.config();
 
 // Validate environment variables
-if (!process.env.MONGO_URI) {
-  console.error("FATAL: MONGO_URI not defined in .env file");
+// Validate environment variables
+const requiredEnvVars = ['MONGO_URI', 'DB_NAME', 'SESSION_SECRET'];
+const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingVars.length > 0) {
+  console.error('FATAL: Missing required environment variables:');
+  missingVars.forEach(varName => console.error(`- ${varName}`));
+  
+  // Provide debug info for Render
+  if (process.env.RENDER) {
+    console.log('\n===== Render Environment Variables =====');
+    console.log(Object.keys(process.env).sort().join('\n'));
+  }
+  
   process.exit(1);
 }
 
-if (!process.env.DB_NAME) {
-  console.error("FATAL: DB_NAME not defined in .env file");
-  process.exit(1);
-}
-
-console.log("MONGO_URI:", process.env.MONGO_URI);
-console.log("DB_NAME:", process.env.DB_NAME);
+console.log('Environment variables validated successfully');
+console.log(`MONGO_URI: ${process.env.MONGO_URI.substring(0, 25)}... [masked]`);
+console.log(`DB_NAME: ${process.env.DB_NAME}`);
 
 const app = express();
 const PORT = process.env.PORT || 8080;
