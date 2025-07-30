@@ -1,3 +1,4 @@
+
 import express from 'express';
 import { MongoClient } from 'mongodb';
 import dotenv from 'dotenv';
@@ -14,10 +15,17 @@ import protectedRouter from './routes/protected.js';
 
 dotenv.config();
 
+// Get MongoDB URI from either MONGO_URI or MONGODB_URI
+const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
+
 // Validate environment variables
-// Validate environment variables
-const requiredEnvVars = ['MONGO_URI', 'DB_NAME', 'SESSION_SECRET'];
-const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+const requiredEnvVars = ['DB_NAME', 'SESSION_SECRET'];
+if (!mongoUri) requiredEnvVars.unshift('MONGO_URI/MONGODB_URI');
+
+const missingVars = requiredEnvVars.filter(varName => {
+  if (varName === 'MONGO_URI/MONGODB_URI') return !mongoUri;
+  return !process.env[varName];
+});
 
 if (missingVars.length > 0) {
   console.error('FATAL: Missing required environment variables:');
@@ -33,14 +41,14 @@ if (missingVars.length > 0) {
 }
 
 console.log('Environment variables validated successfully');
-console.log(`MONGO_URI: ${process.env.MONGO_URI.substring(0, 25)}... [masked]`);
 console.log(`DB_NAME: ${process.env.DB_NAME}`);
+console.log(`Using MongoDB URI: ${mongoUri.substring(0, 25)}... [masked]`);
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
 // Create MongoDB client
-const client = new MongoClient(process.env.MONGO_URI, {
+const client = new MongoClient(mongoUri, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 });
@@ -71,9 +79,15 @@ app.use((req, res, next) => {
   next();
 });
 
-// Session configuration (must be after DB connection)
+// Render production settings
+if (process.env.RENDER) {
+  console.log('Applying Render production settings');
+  app.set('trust proxy', 1); // Trust first proxy
+}
+
+// Session configuration
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'your_secret_key',
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   store: MongoStore.create({
@@ -83,7 +97,8 @@ app.use(session({
     stringify: false,
   }),
   cookie: { 
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env.NODE_ENV === 'production' || process.env.RENDER,
+    sameSite: process.env.RENDER ? 'none' : 'lax',
     maxAge: 1000 * 60 * 60 * 24 // 1 day
   }
 }));
