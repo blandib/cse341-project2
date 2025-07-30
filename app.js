@@ -1,25 +1,40 @@
-
 import express from 'express';
 import { MongoClient } from 'mongodb';
 import dotenv from 'dotenv';
 import cors from 'cors';
+import session from 'express-session';
+import MongoStore from 'connect-mongo';
 import swaggerJsdoc from 'swagger-jsdoc';
 import swaggerUi from 'swagger-ui-express';
+import bcrypt from 'bcrypt';
 import itemsRouter from './routes/items.js';
 import categoriesRouter from './routes/categories.js';
+import authRouter from './routes/auth.js';
+import protectedRouter from './routes/protected.js';
 
 dotenv.config();
+
+// Validate environment variables
+if (!process.env.MONGO_URI) {
+  console.error("FATAL: MONGO_URI not defined in .env file");
+  process.exit(1);
+}
+
+if (!process.env.DB_NAME) {
+  console.error("FATAL: DB_NAME not defined in .env file");
+  process.exit(1);
+}
+
+console.log("MONGO_URI:", process.env.MONGO_URI);
+console.log("DB_NAME:", process.env.DB_NAME);
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-
-// MongoDB Connection
-const client = new MongoClient(process.env.MONGODB_URI, {
-  serverSelectionTimeoutMS: 5000
+// Create MongoDB client
+const client = new MongoClient(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
 });
 
 // Database connection
@@ -28,7 +43,7 @@ let db;
 async function connectDB() {
   try {
     await client.connect();
-    db = client.db('projectDB');
+    db = client.db(process.env.DB_NAME);
     console.log('✅ MongoDB connected');
     return db;
   } catch (err) {
@@ -37,6 +52,34 @@ async function connectDB() {
   }
 }
 
+// Connect to database immediately
+connectDB();
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+app.use((req, res, next) => {
+  console.log(`Incoming: ${req.method} ${req.url}`);
+  next();
+});
+
+// Session configuration (must be after DB connection)
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your_secret_key',
+  resave: false,
+  saveUninitialized: false,
+  store: MongoStore.create({
+    client: client,
+    dbName: process.env.DB_NAME,
+    collectionName: 'sessions',
+    stringify: false,
+  }),
+  cookie: { 
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 1000 * 60 * 60 * 24 // 1 day
+  }
+}));
+
 // Swagger Configuration
 const swaggerOptions = {
   definition: {
@@ -44,7 +87,7 @@ const swaggerOptions = {
     info: {
       title: 'CSE341 Project API',
       version: '1.0.0',
-      description: 'API for managing items and categories',
+      description: 'E-commerce API with authentication',
     },
     servers: [
       {
@@ -74,10 +117,17 @@ const swaggerOptions = {
             created_at: { type: 'string', format: 'date-time' }
           }
         }
+      },
+      securitySchemes: {
+        sessionAuth: {
+          type: 'apiKey',
+          in: 'cookie',
+          name: 'connect.sid'
+        }
       }
     }
   },
-  apis: ['./routes/*.js'], // Path to route files
+  apis: ['./routes/*.js'],
 };
 
 const swaggerSpec = swaggerJsdoc(swaggerOptions);
@@ -92,9 +142,26 @@ app.use(async (req, res, next) => {
   next();
 });
 
+// Password helper functions
+export async function hashPassword(password) {
+  const saltRounds = 10;
+  return bcrypt.hash(password, saltRounds);
+}
+
+export async function comparePassword(password, hashedPassword) {
+  return bcrypt.compare(password, hashedPassword);
+}
+
+// Export database instance
+export function getDb() {
+  return db;
+}
+
 // Routes
 app.use('/api/items', itemsRouter);
 app.use('/api/categories', categoriesRouter);
+app.use('/api/auth', authRouter);
+app.use('/api/protected', protectedRouter);
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
@@ -116,11 +183,11 @@ app.get('/health', async (req, res) => {
 
 // Root endpoint
 app.get('/', (req, res) => {
-  res.redirect('/api-docs'); // Redirect to Swagger UI
+  res.redirect('/api-docs');
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log(` Server running on port ${PORT}`);
-  console.log(` Swagger UI: http://localhost:${PORT}/api-docs`);
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);
 });
